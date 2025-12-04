@@ -109,6 +109,9 @@ jobs:
     name: rollback-preparation
     runs-on: ubuntu-latest
     needs: pre-deployment
+    outputs:
+      artifact_name: ${{ steps.prepare_artifacts.outputs.artifact_name }}
+      checksum: ${{ steps.prepare_artifacts.outputs.checksum }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -237,7 +240,7 @@ jobs:
           5. Re-run smoke tests.
 
           ## Quick Command
-          See the deployment issue comment titled "🔄 Rollback Plan Ready" for a ready-to-run snippet.
+          See the deployment issue comment titled "\ud83d\udd04 Rollback Plan Ready" for a ready-to-run snippet.
 
           ## Verification
           - Rollback script created: true
@@ -308,17 +311,17 @@ jobs:
             const checksum = `${{ steps.prepare_artifacts.outputs.checksum }}`;
             
             const body = [
-              '🔄 Rollback Plan Ready',
+              '\ud83d\udd04 Rollback Plan Ready',
               `Previous Commit: ${prevSha}`,
               `Current Commit: ${currSha}`,
               `Package Version: ${pkgVersion}`,
               `Artifact: ${artifactName}`,
               '',
-              '✅ Rollback script (executable)',
-              '✅ Configuration backups (package.json, package-lock.json, env template)',
-              '✅ Dependency verification script',
-              '✅ Detailed rollback documentation',
-              '✅ Compressed package with checksums',
+              '\u2705 Rollback script (executable)',
+              '\u2705 Configuration backups (package.json, package-lock.json, env template)',
+              '\u2705 Dependency verification script',
+              '\u2705 Detailed rollback documentation',
+              '\u2705 Compressed package with checksums',
               '',
               'Quick rollback command:',
               '```bash',
@@ -352,6 +355,10 @@ jobs:
         with:
           script: |
             const issue_number = Number(`${{ needs.pre-deployment.outputs.issue_number }}`);
+            const currSha = `${{ needs.pre-deployment.outputs.current_sha }}`;
+            const artifactNameFromJob = `${{ needs.rollback-preparation.outputs.artifact_name }}`;
+            const checksum = `${{ needs.rollback-preparation.outputs.checksum }}`;
+            const artifactName = artifactNameFromJob || `rollback-package-${currSha}`;
             // Remove 'in-progress' label
             try {
               await github.rest.issues.removeLabel({
@@ -371,12 +378,11 @@ jobs:
               labels: ['completed']
             });
             // Final comment
-            const artifactName = `${{ needs.rollback-preparation.outputs?.artifact_name || '' }}`;
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number,
-              body: `Deployment Completed Successfully${artifactName ? `\\nRollback Artifact: ${artifactName}` : ''}`
+              body: `Deployment Completed Successfully\nRollback Artifact: ${artifactName}${checksum ? `\nArtifact SHA256: ${checksum}` : ''}`
             });
             // Close issue
             await github.rest.issues.update({
