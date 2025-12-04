@@ -369,7 +369,9 @@ jobs:
   post-deployment:
     name: post-deployment
     runs-on: ubuntu-latest
-    needs: rollback-preparation
+    needs:
+      - pre-deployment
+      - rollback-preparation
     steps:
       - name: Update labels and close issue
         uses: actions/github-script@v7
