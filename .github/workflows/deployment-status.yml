@@ -71,6 +71,27 @@ jobs:
           echo "previous_sha=${PREV_SHA}" >> "$GITHUB_OUTPUT"
           echo "package_version=${PACKAGE_VERSION}" >> "$GITHUB_OUTPUT"
 
+      - name: Ensure deployment labels exist
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = [
+              { name: 'deployment', color: '0366d6', description: 'Deployment tracking issues' },
+              { name: 'in-progress', color: 'FBCA04', description: 'Deployment currently in progress' },
+              { name: 'completed', color: '0E8A16', description: 'Deployment completed' },
+            ];
+            for (const l of labels) {
+              try {
+                await github.rest.issues.getLabel({ owner: context.repo.owner, repo: context.repo.repo, name: l.name });
+              } catch (e) {
+                if (e.status === 404) {
+                  await github.rest.issues.createLabel({ owner: context.repo.owner, repo: context.repo.repo, name: l.name, color: l.color, description: l.description });
+                } else {
+                  throw e;
+                }
+              }
+            }
+
       - name: Create deployment tracking issue
         id: create_issue
         uses: actions/github-script@v7
