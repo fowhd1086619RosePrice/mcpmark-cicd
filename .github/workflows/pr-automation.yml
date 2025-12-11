@@ -1,0 +1,227 @@
+name: Pull Request Automation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  code-quality:
+    name: code-quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint checks
+        id: eslint
+        run: |
+          npm run lint
+          if [ $? -ne 0 ]; then
+            echo "eslint_failed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run Prettier formatting checks
+        id: prettier
+        run: |
+          npx prettier --check .
+          if [ $? -ne 0 ]; then
+            echo "prettier_failed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Post Code Quality Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const eslintFailed = context.steps.eslint.output.eslint_failed;
+            const prettierFailed = context.steps.prettier.output.prettier_failed;
+            
+            let comment = "## Code Quality Report\n\n";
+            comment += "### ESLint Checks: " + (eslintFailed ? "❌ Failed" : "✅ Passed") + "\n";
+            comment += "### Prettier Formatting: " + (prettierFailed ? "❌ Failed" : "✅ Passed") + "\n";
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+
+  testing-suite:
+    name: testing-suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run test suite with coverage
+        id: test
+        run: |
+          npm test -- --coverage
+          if [ $? -ne 0 ]; then
+            echo "test_failed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-coverage-report
+          path: ./coverage/
+          if-no-files-found: warn
+
+      - name: Post Test Coverage Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const testFailed = context.steps.test.output.test_failed;
+            
+            let comment = "## Test Coverage Report\n\n";
+            comment += "### Test Suite Execution: " + (testFailed ? "❌ Failed" : "✅ Passed") + "\n";
+            comment += "### Coverage Artifact: Available for download (test-coverage-report)\n";
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+
+  security-scan:
+    name: security-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Dependency vulnerability check (npm audit)
+        id: npm-audit
+        run: |
+          npm audit --audit-level moderate
+          if [ $? -ne 0 ]; then
+            echo "vulnerabilities_found=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Secret scan (Gitleaks)
+        id: secret-scan
+        uses: gitleaks/gitleaks-action@v2.3.2
+        with:
+          args: --path=. --verbose --redact
+
+      - name: Post Security Scan Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const vulnerabilitiesFound = context.steps['npm-audit'].output.vulnerabilities_found;
+            const secretScanFailed = context.steps['secret-scan'].outcome === 'failure';
+            
+            let comment = "## Security Scan Report\n\n";
+            comment += "### Dependencies Vulnerabilities: " + (vulnerabilitiesFound ? "❌ Vulnerabilities Detected" : "✅ No Vulnerabilities Found") + "\n";
+            comment += "### Secret Scan: " + (secretScanFailed ? "❌ Secrets Detected" : "✅ No Secrets Found") + "\n";
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+
+  build-validation:
+    name: build-validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        id: build
+        run: |
+          npm run build
+          if [ $? -ne 0 ]; then
+            echo "build_failed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate application endpoints (example)
+        id: endpoint-validation
+        if: steps.build.outcome == 'success'
+        run: |
+          # Start application in background
+          npm start &
+          APP_PID=$!
+
+          # Wait for application to start
+          sleep 8
+
+          # Validate default endpoint (adjust URL to match your application)
+          curl -f http://localhost:3000 || (
+            echo "endpoint_failed=true" >> $GITHUB_OUTPUT &&
+            kill $APP_PID &&
+            exit 1
+          )
+
+          # Clean up
+          kill $APP_PID
+
+      - name: Upload deployment preview artifacts
+        uses: actions/upload-artifact@v4
+        if: steps.build.outcome == 'success'
+        with:
+          name: deployment-preview
+          path: ./dist/
+          if-no-files-found: warn
+
+      - name: Post Build Validation Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const buildFailed = context.steps.build.output.build_failed;
+            const endpointFailed = context.steps['endpoint-validation']?.output.endpoint_failed;
+            
+            let comment = "## Build Validation\n\n";
+            comment += "### Application Build: " + (buildFailed ? "❌ Failed" : "✅ Success") + "\n";
+
+            if (!buildFailed) {
+              comment += "### Endpoint Validation: " + (endpointFailed ? "❌ Failed" : "✅ Success") + "\n";
+              comment += "### Deployment Preview: Available for download (deployment-preview)\n";
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
